@@ -21,6 +21,19 @@ milvus:
 
 # Spring AI Alibaba DashScope 配置
 spring:
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:super_biz_agent}?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:yangyiming.com}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: false
+    show-sql: false
   ai:
     dashscope:
       api-key: ${DASHSCOPE_API_KEY}  # 从环境变量读取或使用默认值
@@ -66,6 +79,37 @@ document:
 rag:
   top-k: 3  # 检索返回的最相似文档数量
   model: "qwen3-max"  # 大语言模型名称
+
+# 长期记忆配置
+memory:
+  enabled: true
+  store-enabled: true
+  store:
+    unit-max-length: 700
+    unit-overlap: 100
+    max-units-per-turn: 8
+    include-question-context: true
+  conflict:
+    enabled: true
+    preference-dedup-enabled: true
+    query-limit: 200
+  recall-top-k: 3
+  recall-candidate-top-k: 20
+  recall:
+    structured-filter-enabled: true
+    rerank-enabled: true
+  summary:
+    enabled: true
+    max-length: 2500
+    trigger-pairs: 4
+    llm-enabled: true
+    model: "qwen3-max"
+    temperature: 0.2
+    max-token: 700
+  structured:
+    enabled: true
+    max-keywords: 8
+    max-entities: 8
 
 # Prometheus 配置
 prometheus:

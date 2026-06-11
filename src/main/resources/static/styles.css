@@ -186,6 +186,36 @@ body {
     flex-shrink: 0;
 }
 
+.history-item-rename {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    color: #5f6368;
+    opacity: 0;
+    transition: opacity 0.2s, background 0.2s;
+    flex-shrink: 0;
+    margin-right: 4px;
+}
+
+.history-item:hover .history-item-rename {
+    opacity: 1;
+}
+
+.history-item-rename:hover {
+    background: rgba(26, 115, 232, 0.1);
+    color: #1a73e8;
+}
+
+.history-item-rename svg {
+    width: 16px;
+    height: 16px;
+}
+
 .history-item:hover .history-item-delete {
     opacity: 1;
 }

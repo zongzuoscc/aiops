@@ -66,6 +66,35 @@ public class RagService {
         queryStream(question, new ArrayList<>(), callback);
     }
 
+    public void queryStream(String question, List<Map<String, String>> history, List<String> recalledMemories, StreamCallback callback) {
+        try {
+            logger.info("收到 RAG 流式查询: {}", question);
+
+            // 1. 从向量数据库检索相关文档
+            List<VectorSearchService.SearchResult> searchResults =
+                vectorSearchService.searchSimilarDocuments(question, topK);
+
+            // 发送检索结果
+            callback.onSearchResults(searchResults);
+
+            if (searchResults.isEmpty() && (recalledMemories == null || recalledMemories.isEmpty())) {
+                logger.warn("未找到相关文档和长期记忆");
+                callback.onComplete("抱歉，我在知识库和历史记忆中都没有找到相关信息来回答您的问题。", "");
+                return;
+            }
+
+            // 2. 构建上下文和提示词
+            String context = buildContext(searchResults);
+            String prompt = buildPrompt(question, context, recalledMemories);
+
+            // 3. 流式调用大语言模型（传入历史消息）
+            generateAnswerStream(prompt, history, callback);
+        } catch (Exception e) {
+            logger.error("RAG 流式查询失败", e);
+            callback.onError(e);
+        }
+    }
+
     /**
      * 流式处理用户问题（带历史消息）
      * 
@@ -74,33 +103,7 @@ public class RagService {
      * @param callback 流式回调接口
      */
     public void queryStream(String question, List<Map<String, String>> history, StreamCallback callback) {
-        try {
-            logger.info("收到 RAG 流式查询: {}", question);
-
-            // 1. 从向量数据库检索相关文档
-            List<VectorSearchService.SearchResult> searchResults = 
-                vectorSearchService.searchSimilarDocuments(question, topK);
-
-            // 发送检索结果
-            callback.onSearchResults(searchResults);
-
-            if (searchResults.isEmpty()) {
-                logger.warn("未找到相关文档");
-                callback.onComplete("抱歉，我在知识库中没有找到相关信息来回答您的问题。", "");
-                return;
-            }
-
-            // 2. 构建上下文和提示词
-            String context = buildContext(searchResults);
-            String prompt = buildPrompt(question, context);
-
-            // 3. 流式调用大语言模型（传入历史消息）
-            generateAnswerStream(prompt, history, callback);
-
-        } catch (Exception e) {
-            logger.error("RAG 流式查询失败", e);
-            callback.onError(e);
-        }
+        queryStream(question, history, new ArrayList<>(), callback);
     }
 
     /**
@@ -122,12 +125,25 @@ public class RagService {
      * 构建提示词
      */
     private String buildPrompt(String question, String context) {
+        return buildPrompt(question, context, new ArrayList<>());
+    }
+
+    private String buildPrompt(String question, String context, List<String> recalledMemories) {
+        StringBuilder memoryBuilder = new StringBuilder();
+        if (recalledMemories != null && !recalledMemories.isEmpty()) {
+            memoryBuilder.append("\n长期记忆：\n");
+            for (String memory : recalledMemories) {
+                memoryBuilder.append("- ").append(memory).append("\n");
+            }
+        }
+
         return String.format(
             "你是一个专业的AI助手。请根据以下参考资料回答用户的问题。\n\n" +
             "参考资料：\n%s\n" +
+            "%s" +
             "用户问题：%s\n\n" +
             "请基于上述参考资料给出准确、详细的回答。如果参考资料中没有相关信息，请明确说明。",
-            context, question
+            context, memoryBuilder, question
         );
     }
 

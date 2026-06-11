@@ -8,6 +8,9 @@ DOCS_DIR = aiops-docs
 HEALTH_CHECK_API = $(SERVER_URL)/milvus/health
 DOCKER_COMPOSE_FILE = vector-database.yml
 MILVUS_CONTAINER = milvus-standalone
+MYSQL_CONTAINER = milvus-mysql
+MYSQL_ROOT_PASSWORD = yangyiming.com
+MVN_CMD = mvn -s settings-local.xml
 
 # 颜色输出
 GREEN =
@@ -15,7 +18,7 @@ YELLOW =
 RED =
 NC =
 
-.PHONY: help init start stop restart check upload clean up down status wait
+.PHONY: help init start stop restart check upload clean up down status wait wait-mysql
 
 # 默认目标：显示帮助信息
 help:
@@ -31,6 +34,7 @@ help:
 	@echo "  $(YELLOW)make restart$(NC) - 重启 Spring Boot 服务"
 	@echo "  $(YELLOW)make check$(NC)   - 检查服务器是否运行"
 	@echo "  $(YELLOW)make upload$(NC)  - 上传 aiops-docs 目录下的所有文档"
+	@echo "  $(YELLOW)make wait-mysql$(NC) - 等待 MySQL 容器就绪"
 	@echo "  $(YELLOW)make clean$(NC)   - 清理临时文件"
 	@echo ""
 	@echo "使用示例："
@@ -38,20 +42,23 @@ help:
 	@echo "  2. 手动启动: make up && make start && make upload"
 	@echo "  3. 停止服务: make stop && make down"
 
-# 一键初始化：启动Docker → 启动服务 → 检查服务 → 上传文档
+# 一键初始化：启动Docker → 等待MySQL → 启动服务 → 检查服务 → 上传文档
 init:
 	@echo "$(GREEN)🚀 开始一键初始化 SuperBizAgent...$(NC)"
 	@echo ""
-	@echo "$(YELLOW)步骤 1/4: 启动 Docker Compose（Milvus 向量数据库）$(NC)"
+	@echo "$(YELLOW)步骤 1/5: 启动 Docker Compose（Milvus 向量数据库）$(NC)"
 	@$(MAKE) up
 	@echo ""
-	@echo "$(YELLOW)步骤 2/4: 启动 Spring Boot 服务$(NC)"
+	@echo "$(YELLOW)步骤 2/5: 等待 MySQL 容器就绪$(NC)"
+	@$(MAKE) wait-mysql
+	@echo ""
+	@echo "$(YELLOW)步骤 3/5: 启动 Spring Boot 服务$(NC)"
 	@$(MAKE) start
 	@echo ""
-	@echo "$(YELLOW)步骤 3/4: 等待服务就绪$(NC)"
+	@echo "$(YELLOW)步骤 4/5: 等待服务就绪$(NC)"
 	@$(MAKE) wait
 	@echo ""
-	@echo "$(YELLOW)步骤 4/4: 上传 AIOps 文档到向量数据库$(NC)"
+	@echo "$(YELLOW)步骤 5/5: 上传 AIOps 文档到向量数据库$(NC)"
 	@$(MAKE) upload
 	@echo ""
 	@echo "$(GREEN)═══════════════════════════════════════════════════════$(NC)"
@@ -71,7 +78,7 @@ start:
 		echo "$(GREEN)✅ 服务已经在运行中 ($(SERVER_URL))$(NC)"; \
 	else \
 		echo "$(YELLOW)📦 正在启动服务（后台运行）...$(NC)"; \
-		nohup mvn spring-boot:run > server.log 2>&1 & \
+		nohup $(MVN_CMD) spring-boot:run > server.log 2>&1 & \
 		echo $$! > server.pid; \
 		echo "$(GREEN)✅ 服务启动命令已执行$(NC)"; \
 		echo "$(YELLOW)   PID: $$(cat server.pid)$(NC)"; \
@@ -97,6 +104,28 @@ wait:
 	echo "$(YELLOW)请检查日志: tail -f server.log$(NC)"; \
 	exit 1
 
+# 等待 MySQL 容器就绪（最多等待 120 秒）
+wait-mysql:
+	@echo "$(YELLOW)⏳ 等待 MySQL 容器就绪...$(NC)"
+	@max_attempts=120; \
+	attempt=0; \
+	while [ $$attempt -lt $$max_attempts ]; do \
+		if docker ps --format '{{.Names}}' | grep -q "^$(MYSQL_CONTAINER)$$"; then \
+			health_status=$$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' $(MYSQL_CONTAINER) 2>/dev/null); \
+			if [ "$$health_status" = "healthy" ] || [ "$$health_status" = "none" ]; then \
+				echo "$(GREEN)✅ MySQL 已就绪 (container: $(MYSQL_CONTAINER))$(NC)"; \
+				exit 0; \
+			fi; \
+		fi; \
+		attempt=$$((attempt + 1)); \
+		printf "$(YELLOW)   等待 MySQL 中... [$$attempt/$$max_attempts]$(NC)\r"; \
+		sleep 1; \
+	done; \
+	echo ""; \
+	echo "$(RED)❌ MySQL 容器就绪超时！$(NC)"; \
+	echo "$(YELLOW)请检查: docker logs $(MYSQL_CONTAINER)$(NC)"; \
+	exit 1
+
 # 检查服务器是否运行
 check:
 	@echo "$(YELLOW)🔍 检查服务器状态...$(NC)"
@@ -104,7 +133,7 @@ check:
 		echo "$(GREEN)✅ 服务器运行正常 ($(SERVER_URL))$(NC)"; \
 	else \
 		echo "$(RED)❌ 服务器未运行或无法连接！$(NC)"; \
-		echo "$(YELLOW)请先启动项目: mvn spring-boot:run$(NC)"; \
+		echo "$(YELLOW)请先启动项目: $(MVN_CMD) spring-boot:run$(NC)"; \
 		exit 1; \
 	fi
 
@@ -212,17 +241,19 @@ up:
 		echo "$(RED)❌ Docker Compose 文件不存在: $(DOCKER_COMPOSE_FILE)$(NC)"; \
 		exit 1; \
 	fi
-	@if docker ps --format '{{.Names}}' | grep -q "^$(MILVUS_CONTAINER)$$"; then \
-		echo "$(GREEN)✅ Milvus 容器已经在运行中$(NC)"; \
+	@if docker ps --format '{{.Names}}' | grep -q "^$(MILVUS_CONTAINER)$$" && \
+		docker ps --format '{{.Names}}' | grep -q "^$(MYSQL_CONTAINER)$$"; then \
+		echo "$(GREEN)✅ Milvus 和 MySQL 容器已经在运行中$(NC)"; \
 		echo "$(YELLOW)📋 当前运行的容器:$(NC)"; \
 		docker ps --filter "name=milvus" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"; \
 	else \
-		echo "$(YELLOW)🚀 启动 Docker Compose...$(NC)"; \
+		echo "$(YELLOW)🚀 启动/补齐 Docker Compose 容器...$(NC)"; \
 		docker-compose -f $(DOCKER_COMPOSE_FILE) up -d; \
 		echo ""; \
 		echo "$(YELLOW)⏳ 等待容器启动...$(NC)"; \
 		sleep 5; \
-		if docker ps --format '{{.Names}}' | grep -q "^$(MILVUS_CONTAINER)$$"; then \
+		if docker ps --format '{{.Names}}' | grep -q "^$(MILVUS_CONTAINER)$$" && \
+			docker ps --format '{{.Names}}' | grep -q "^$(MYSQL_CONTAINER)$$"; then \
 			echo "$(GREEN)✅ Docker Compose 启动成功！$(NC)"; \
 			echo ""; \
 			echo "$(GREEN)📋 运行中的容器:$(NC)"; \
@@ -230,6 +261,7 @@ up:
 			echo ""; \
 			echo "$(GREEN)🌐 服务访问地址:$(NC)"; \
 			echo "   Milvus: localhost:19530"; \
+			echo "   MySQL: localhost:3306"; \
 			echo "   Attu (Web UI): http://localhost:8000"; \
 			echo "   MinIO: http://localhost:9001 (admin/minioadmin)"; \
 		else \

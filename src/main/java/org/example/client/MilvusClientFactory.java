@@ -60,6 +60,16 @@ public class MilvusClientFactory {
                 logger.info("collection '{}' 已存在", MilvusConstants.MILVUS_COLLECTION_NAME);
             }
 
+            if (!collectionExists(client, MilvusConstants.CHAT_MEMORY_COLLECTION_NAME)) {
+                logger.info("collection '{}' 不存在，正在创建...", MilvusConstants.CHAT_MEMORY_COLLECTION_NAME);
+                createChatMemoryCollection(client);
+                logger.info("成功创建 collection '{}'", MilvusConstants.CHAT_MEMORY_COLLECTION_NAME);
+                createChatMemoryIndexes(client);
+                logger.info("成功创建 chat memory 索引");
+            } else {
+                logger.info("collection '{}' 已存在", MilvusConstants.CHAT_MEMORY_COLLECTION_NAME);
+            }
+
             return client;
 
         } catch (Exception e) {
@@ -175,5 +185,102 @@ public class MilvusClientFactory {
         }
         
         logger.info("成功为 vector 字段创建索引");
+    }
+
+    private void createChatMemoryCollection(MilvusServiceClient client) {
+        FieldType idField = FieldType.newBuilder()
+                .withName("id")
+                .withDataType(DataType.VarChar)
+                .withMaxLength(MilvusConstants.ID_MAX_LENGTH)
+                .withPrimaryKey(true)
+                .build();
+
+        FieldType sessionIdField = FieldType.newBuilder()
+                .withName("session_id")
+                .withDataType(DataType.VarChar)
+                .withMaxLength(MilvusConstants.SESSION_ID_MAX_LENGTH)
+                .build();
+
+        FieldType roleField = FieldType.newBuilder()
+                .withName("role")
+                .withDataType(DataType.VarChar)
+                .withMaxLength(16)
+                .build();
+
+        FieldType intentField = FieldType.newBuilder()
+                .withName("intent")
+                .withDataType(DataType.VarChar)
+                .withMaxLength(MilvusConstants.INTENT_MAX_LENGTH)
+                .build();
+
+        FieldType topicField = FieldType.newBuilder()
+                .withName("topic")
+                .withDataType(DataType.VarChar)
+                .withMaxLength(MilvusConstants.TOPIC_MAX_LENGTH)
+                .build();
+
+        FieldType memoryTypeField = FieldType.newBuilder()
+                .withName("memory_type")
+                .withDataType(DataType.VarChar)
+                .withMaxLength(MilvusConstants.MEMORY_TYPE_MAX_LENGTH)
+                .build();
+
+        FieldType vectorField = FieldType.newBuilder()
+                .withName("vector")
+                .withDataType(DataType.FloatVector)
+                .withDimension(MilvusConstants.VECTOR_DIM)
+                .build();
+
+        FieldType contentField = FieldType.newBuilder()
+                .withName("content")
+                .withDataType(DataType.VarChar)
+                .withMaxLength(MilvusConstants.CONTENT_MAX_LENGTH)
+                .build();
+
+        FieldType metadataField = FieldType.newBuilder()
+                .withName("metadata")
+                .withDataType(DataType.JSON)
+                .build();
+
+        CollectionSchemaParam schema = CollectionSchemaParam.newBuilder()
+                .withEnableDynamicField(false)
+                .addFieldType(idField)
+                .addFieldType(sessionIdField)
+                .addFieldType(roleField)
+                .addFieldType(intentField)
+                .addFieldType(topicField)
+                .addFieldType(memoryTypeField)
+                .addFieldType(vectorField)
+                .addFieldType(contentField)
+                .addFieldType(metadataField)
+                .build();
+
+        CreateCollectionParam createParam = CreateCollectionParam.newBuilder()
+                .withCollectionName(MilvusConstants.CHAT_MEMORY_COLLECTION_NAME)
+                .withDescription("Conversation memory collection")
+                .withSchema(schema)
+                .withShardsNum(MilvusConstants.DEFAULT_SHARD_NUMBER)
+                .build();
+
+        R<RpcStatus> response = client.createCollection(createParam);
+        if (response.getStatus() != 0) {
+            throw new RuntimeException("创建 chat memory collection 失败: " + response.getMessage());
+        }
+    }
+
+    private void createChatMemoryIndexes(MilvusServiceClient client) {
+        CreateIndexParam vectorIndexParam = CreateIndexParam.newBuilder()
+                .withCollectionName(MilvusConstants.CHAT_MEMORY_COLLECTION_NAME)
+                .withFieldName("vector")
+                .withIndexType(IndexType.IVF_FLAT)
+                .withMetricType(MetricType.L2)
+                .withExtraParam("{\"nlist\":128}")
+                .withSyncMode(Boolean.FALSE)
+                .build();
+
+        R<RpcStatus> response = client.createIndex(vectorIndexParam);
+        if (response.getStatus() != 0) {
+            throw new RuntimeException("创建 chat memory vector 索引失败: " + response.getMessage());
+        }
     }
 }

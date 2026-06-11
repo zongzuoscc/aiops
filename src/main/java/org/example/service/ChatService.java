@@ -44,6 +44,9 @@ public class ChatService {
     @Autowired
     private ToolCallbackProvider tools;
 
+    @Autowired
+    private LongTermMemoryService longTermMemoryService;
+
     @Value("${spring.ai.dashscope.api-key}")
     private String dashScopeApiKey;
 
@@ -63,10 +66,17 @@ public class ChatService {
      * @param topP 核采样参数
      */
     public DashScopeChatModel createChatModel(DashScopeApi dashScopeApi, double temperature, int maxToken, double topP) {
+        return createChatModel(dashScopeApi, temperature, maxToken, topP, DashScopeChatModel.DEFAULT_MODEL_NAME);
+    }
+
+    public DashScopeChatModel createChatModel(DashScopeApi dashScopeApi, double temperature, int maxToken, double topP, String modelName) {
+        String finalModelName = (modelName == null || modelName.isBlank())
+                ? DashScopeChatModel.DEFAULT_MODEL_NAME
+                : modelName.trim();
         return DashScopeChatModel.builder()
                 .dashScopeApi(dashScopeApi)
                 .defaultOptions(DashScopeChatOptions.builder()
-                        .withModel(DashScopeChatModel.DEFAULT_MODEL_NAME)
+                        .withModel(finalModelName)
                         .withTemperature(temperature)
                         .withMaxToken(maxToken)
                         .withTopP(topP)
@@ -87,6 +97,10 @@ public class ChatService {
      * @return 完整的系统提示词
      */
     public String buildSystemPrompt(List<Map<String, String>> history) {
+        return buildSystemPrompt(history, List.of());
+    }
+
+    public String buildSystemPrompt(List<Map<String, String>> history, List<String> recalledMemories) {
         StringBuilder systemPromptBuilder = new StringBuilder();
         
         // 基础系统提示
@@ -110,10 +124,30 @@ public class ChatService {
             }
             systemPromptBuilder.append("--- 对话历史结束 ---\n\n");
         }
+
+        if (recalledMemories != null && !recalledMemories.isEmpty()) {
+            systemPromptBuilder.append("--- 长期记忆 ---\n");
+            for (String memory : recalledMemories) {
+                systemPromptBuilder.append("- ").append(memory).append("\n");
+            }
+            systemPromptBuilder.append("--- 长期记忆结束 ---\n\n");
+        }
         
         systemPromptBuilder.append("请基于以上对话历史，回答用户的新问题。");
         
         return systemPromptBuilder.toString();
+    }
+
+    public List<String> recallMemories(String sessionId, String question) {
+        return longTermMemoryService.recallRelevantMemories(sessionId, question);
+    }
+
+    public void storeMemory(String sessionId, String question, String answer, String mode) {
+        longTermMemoryService.storeConversationMemory(sessionId, question, answer, mode);
+    }
+
+    public boolean deleteMemories(String sessionId) {
+        return longTermMemoryService.deleteSessionMemories(sessionId);
     }
 
     /**

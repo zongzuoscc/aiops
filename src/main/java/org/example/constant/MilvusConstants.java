@@ -11,6 +11,11 @@ public class MilvusConstants {
      * Milvus 集合名称
      */
     public static final String MILVUS_COLLECTION_NAME = "biz";
+
+    /**
+     * 会话长期记忆集合名称
+     */
+    public static final String CHAT_MEMORY_COLLECTION_NAME = "chat_memory";
     
     /**
      * 向量维度（豆包 embedding 模型的维度）
@@ -21,6 +26,18 @@ public class MilvusConstants {
      * ID字段最大长度
      */
     public static final int ID_MAX_LENGTH = 256;
+
+    /**
+     * Session ID 字段最大长度
+     */
+    public static final int SESSION_ID_MAX_LENGTH = 128;
+
+    /**
+     * 结构化字段最大长度
+     */
+    public static final int INTENT_MAX_LENGTH = 64;
+    public static final int TOPIC_MAX_LENGTH = 64;
+    public static final int MEMORY_TYPE_MAX_LENGTH = 32;
     
     /**
      * Content字段最大长度

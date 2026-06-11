@@ -16,6 +16,7 @@ class SuperBizAgentApp {
         this.initMarkdown();
         this.checkAndSetCentered();
         this.renderChatHistory();
+        this.syncChatHistoriesFromServer();
     }
 
     // 初始化Markdown配置
@@ -306,6 +307,7 @@ class SuperBizAgentApp {
         const chatHistory = {
             id: this.sessionId,
             title: title,
+            titleCustomized: false,
             messages: [...this.currentChatHistory],
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
@@ -321,6 +323,19 @@ class SuperBizAgentApp {
         
         // 保存到localStorage
         this.saveChatHistories();
+    }
+
+    // 持久化当前对话并刷新近期列表
+    persistCurrentChatToHistory() {
+        if (this.currentChatHistory.length === 0) {
+            return;
+        }
+        if (this.isCurrentChatFromHistory) {
+            this.updateCurrentChatHistory();
+        } else {
+            this.saveCurrentChat();
+        }
+        this.renderChatHistory();
     }
     
     // 更新当前对话的历史记录
@@ -342,11 +357,13 @@ class SuperBizAgentApp {
         history.updatedAt = new Date().toISOString();
         
         // 如果标题需要更新（第一条消息改变了）
-        const firstUserMessage = this.currentChatHistory.find(msg => msg.type === 'user');
-        if (firstUserMessage) {
-            const newTitle = firstUserMessage.content.substring(0, 30) + (firstUserMessage.content.length > 30 ? '...' : '');
-            if (history.title !== newTitle) {
-                history.title = newTitle;
+        if (!history.titleCustomized) {
+            const firstUserMessage = this.currentChatHistory.find(msg => msg.type === 'user');
+            if (firstUserMessage) {
+                const newTitle = firstUserMessage.content.substring(0, 30) + (firstUserMessage.content.length > 30 ? '...' : '');
+                if (history.title !== newTitle) {
+                    history.title = newTitle;
+                }
             }
         }
         
@@ -373,6 +390,81 @@ class SuperBizAgentApp {
             console.error('保存历史对话失败:', e);
         }
     }
+
+    // 页面初始化时从后端同步近期会话，避免仅依赖本地缓存
+    async syncChatHistoriesFromServer() {
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/chat/sessions?limit=200&includeEmpty=true`);
+            if (!response.ok) {
+                return;
+            }
+            const result = await response.json();
+            const sessions = Array.isArray(result?.data) ? result.data : [];
+            if (sessions.length === 0) {
+                return;
+            }
+
+            const localMap = new Map((this.chatHistories || []).map(item => [item.id, item]));
+            const merged = [];
+
+            sessions.forEach(session => {
+                const sessionId = session?.sessionId;
+                if (!sessionId) {
+                    return;
+                }
+                const serverTime = this.toIsoTime(session?.createTime);
+                const localItem = localMap.get(sessionId);
+                const customTitle = (session?.customTitle || '').trim();
+                const fallbackTitle = this.buildTitleFromText(session?.summaryText || '') || `会话 ${sessionId.slice(0, 8)}`;
+                const serverTitle = customTitle || fallbackTitle;
+                const serverTitleCustomized = !!customTitle;
+
+                if (localItem) {
+                    merged.push({
+                        ...localItem,
+                        title: localItem.titleCustomized ? localItem.title : (localItem.title || serverTitle),
+                        titleCustomized: localItem.titleCustomized || serverTitleCustomized,
+                        createdAt: localItem.createdAt || serverTime,
+                        updatedAt: localItem.updatedAt || serverTime
+                    });
+                    localMap.delete(sessionId);
+                } else {
+                    merged.push({
+                        id: sessionId,
+                        title: serverTitle,
+                        titleCustomized: serverTitleCustomized,
+                        messages: [],
+                        createdAt: serverTime,
+                        updatedAt: serverTime,
+                        source: 'server'
+                    });
+                }
+            });
+
+            localMap.forEach(item => merged.push(item));
+            merged.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+            this.chatHistories = merged.slice(0, 50);
+            this.saveChatHistories();
+            this.renderChatHistory();
+        } catch (e) {
+            console.warn('从后端同步近期会话失败:', e);
+        }
+    }
+
+    toIsoTime(timestamp) {
+        if (!timestamp || Number.isNaN(Number(timestamp))) {
+            return new Date().toISOString();
+        }
+        return new Date(Number(timestamp)).toISOString();
+    }
+
+    buildTitleFromText(text) {
+        const normalized = (text || '').replace(/\s+/g, ' ').trim();
+        if (!normalized) {
+            return '';
+        }
+        return normalized.substring(0, 30) + (normalized.length > 30 ? '...' : '');
+    }
     
     // 渲染历史对话列表
     renderChatHistory() {
@@ -395,6 +487,11 @@ class SuperBizAgentApp {
                 <div class="history-item-content">
                     <span class="history-item-title">${this.escapeHtml(history.title)}</span>
                 </div>
+                <button class="history-item-rename" data-history-id="${history.id}" title="重命名">
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M4 20H8L18.5 9.5C19.3284 8.67157 19.3284 7.32843 18.5 6.5C17.6716 5.67157 16.3284 5.67157 15.5 6.5L5 17V20Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
                 <button class="history-item-delete" data-history-id="${history.id}" title="删除">
                     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -404,9 +501,16 @@ class SuperBizAgentApp {
             
             // 点击历史项加载对话
             historyItem.addEventListener('click', (e) => {
-                if (!e.target.closest('.history-item-delete')) {
+                if (!e.target.closest('.history-item-delete') && !e.target.closest('.history-item-rename')) {
                     this.loadChatHistory(history.id);
                 }
+            });
+
+            // 重命名历史对话
+            const renameBtn = historyItem.querySelector('.history-item-rename');
+            renameBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.renameChatHistory(history.id);
             });
             
             // 删除历史对话
@@ -421,10 +525,15 @@ class SuperBizAgentApp {
     }
     
     // 加载历史对话
-    loadChatHistory(historyId) {
+    async loadChatHistory(historyId) {
         const history = this.chatHistories.find(h => h.id === historyId);
         if (!history) {
             return;
+        }
+
+        // 本地没有消息体时，尝试从后端恢复该会话消息
+        if ((!Array.isArray(history.messages) || history.messages.length === 0)) {
+            await this.fetchSessionMessagesFromServer(historyId, history);
         }
         
         // 如果当前有对话内容，且不是同一个对话，先保存
@@ -455,9 +564,131 @@ class SuperBizAgentApp {
         this.checkAndSetCentered();
         this.renderChatHistory();
     }
+
+    async fetchSessionMessagesFromServer(historyId, history) {
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/chat/session/${encodeURIComponent(historyId)}/messages?limit=200`);
+            if (!response.ok) {
+                return;
+            }
+            const result = await response.json();
+            const records = Array.isArray(result?.data) ? result.data : [];
+            if (records.length === 0) {
+                return;
+            }
+
+            history.messages = records.map(item => ({
+                type: item.role === 'assistant' ? 'assistant' : 'user',
+                content: item.content || '',
+                timestamp: this.toIsoTime(item.createdAt)
+            }));
+            if (!history.title || history.title === '新对话') {
+                const firstUserMessage = history.messages.find(msg => msg.type === 'user');
+                if (firstUserMessage) {
+                    history.title = this.buildTitleFromText(firstUserMessage.content) || history.title;
+                }
+            }
+            history.updatedAt = new Date().toISOString();
+            this.saveChatHistories();
+            this.renderChatHistory();
+        } catch (e) {
+            console.warn(`从后端加载会话消息失败, sessionId=${historyId}:`, e);
+        }
+    }
+
+    async renameChatHistory(historyId) {
+        const history = this.chatHistories.find(h => h.id === historyId);
+        if (!history) {
+            this.showNotification('未找到该会话', 'error');
+            return;
+        }
+
+        const currentTitle = history.title || '';
+        const inputTitle = window.prompt('请输入新的对话名称（最多 128 字）', currentTitle);
+        if (inputTitle === null) {
+            return;
+        }
+        const newTitle = inputTitle.trim();
+        if (!newTitle) {
+            this.showNotification('标题不能为空', 'warning');
+            return;
+        }
+
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/chat/rename`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    Id: historyId,
+                    Title: newTitle
+                })
+            });
+            if (!response.ok) {
+                this.showNotification('重命名失败：后端返回错误状态', 'error');
+                return;
+            }
+            const result = await response.json();
+            if (!(result && result.code === 200)) {
+                this.showNotification(`重命名失败：${result?.message || '未知错误'}`, 'error');
+                return;
+            }
+
+            history.title = newTitle.substring(0, 128);
+            history.titleCustomized = true;
+            history.updatedAt = new Date().toISOString();
+            this.saveChatHistories();
+            this.renderChatHistory();
+            this.showNotification('重命名成功', 'success');
+            this.syncChatHistoriesFromServer();
+        } catch (e) {
+            console.warn('重命名会话失败:', e);
+            this.showNotification('重命名失败：后端异常', 'error');
+        }
+    }
     
     // 删除历史对话
-    deleteChatHistory(historyId) {
+    async deleteChatHistory(historyId) {
+        const confirmed = window.confirm('确认彻底删除这个对话吗？\n这会删除前端记录、MySQL 会话数据以及 Milvus 长期记忆，且不可恢复。');
+        if (!confirmed) {
+            return;
+        }
+
+        // 同步通知后端彻底删除该会话（MySQL + Milvus）
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/chat/delete`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    Id: historyId,
+                    DeleteMemory: true
+                })
+            });
+            if (!response.ok) {
+                this.showNotification('删除失败：后端返回错误状态', 'error');
+                return;
+            }
+            const result = await response.json();
+            if (!(result && result.code === 200)) {
+                this.showNotification(`删除失败：${result?.message || '未知错误'}`, 'error');
+                return;
+            }
+            const deletedSession = !!result?.data?.deletedSession;
+            const memoryDeletionRequested = !!result?.data?.memoryDeletionRequested;
+            const deletedMemory = !!result?.data?.deletedMemory;
+            if (!deletedSession || (memoryDeletionRequested && !deletedMemory)) {
+                this.showNotification('删除未完全成功，请稍后重试', 'error');
+                return;
+            }
+        } catch (e) {
+            console.warn('后端彻底删除会话失败:', e);
+            this.showNotification('删除失败：后端删除异常', 'error');
+            return;
+        }
+
         this.chatHistories = this.chatHistories.filter(h => h.id !== historyId);
         this.saveChatHistories();
         this.renderChatHistory();
@@ -471,6 +702,7 @@ class SuperBizAgentApp {
             this.sessionId = this.generateSessionId();
             this.checkAndSetCentered();
         }
+        this.syncChatHistoriesFromServer();
     }
 
     // 切换模式下拉菜单
@@ -569,6 +801,7 @@ class SuperBizAgentApp {
 
         // 显示用户消息
         this.addMessage('user', message);
+        this.persistCurrentChatToHistory();
         
         // 清空输入框
         if (this.messageInput) {
@@ -591,12 +824,8 @@ class SuperBizAgentApp {
         } finally {
             this.isStreaming = false;
             this.updateUI();
-            
-            // 如果当前对话是从历史记录加载的，更新历史记录
-            if (this.isCurrentChatFromHistory && this.currentChatHistory.length > 0) {
-                this.updateCurrentChatHistory();
-                this.renderChatHistory(); // 更新历史对话列表显示
-            }
+            this.persistCurrentChatToHistory();
+            this.syncChatHistoriesFromServer();
         }
     }
 
