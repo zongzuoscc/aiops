@@ -51,7 +51,16 @@ uploads/
 *.sh
 *.py
 
+### Frontend ###
+/frontend/node_modules/
+/frontend/dist/
+
 ### docker
 /volumes
 /server.pid
 /.mvn_repo/
+.env.aiops
+.env.autonomous
+.mvn_repo/
+ops-executor/data/
+frontend/.env.local

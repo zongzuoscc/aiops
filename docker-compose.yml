@@ -1,0 +1,162 @@
+version: "3.9"
+
+services:
+  aiops-web-ui:
+    profiles:
+      - legacy
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: aiops-upgrade-web:latest
+    container_name: aiops-upgrade-web
+    ports:
+      - "${WEB_UI_HOST_PORT:-38080}:80"
+    depends_on:
+      aiops-app:
+        condition: service_started
+    networks:
+      - aiops-net
+
+  aiops-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: aiops-upgrade:latest
+    container_name: aiops-upgrade-app
+    env_file:
+      - ./.env.aiops
+    environment:
+      - SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE:-default}
+      - SERVER_PORT=9900
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_DATABASE=super_biz_agent
+      - MYSQL_USER=${MYSQL_USER:-root}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-aiops_root}
+      - MILVUS_HOST=milvus
+      - MILVUS_PORT=19530
+      - API_SECURITY_ENABLED=${API_SECURITY_ENABLED:-false}
+      - API_SECURITY_RATE_LIMIT_ENABLED=${API_SECURITY_RATE_LIMIT_ENABLED:-true}
+    ports:
+      - "${APP_HOST_PORT:-9910}:9900"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+    networks:
+      - aiops-net
+
+  mysql:
+    image: mysql:8.0
+    container_name: aiops-upgrade-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-aiops_root}
+      MYSQL_DATABASE: super_biz_agent
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+    volumes:
+      - mysql-data:/var/lib/mysql
+    ports:
+      - "${MYSQL_HOST_PORT:-33306}:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_PASSWORD:-aiops_root}"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    networks:
+      - aiops-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: aiops-upgrade-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    ports:
+      - "${REDIS_HOST_PORT:-6380}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aiops-net
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.18
+    container_name: aiops-upgrade-etcd
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-./volumes}/aiops-etcd:/etcd
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    ports:
+      - "${ETCD_HOST_PORT:-23379}:2379"
+    networks:
+      - aiops-net
+
+  minio:
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    container_name: aiops-upgrade-minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-./volumes}/aiops-minio:/minio_data
+    command: minio server /minio_data --console-address ":9001"
+    ports:
+      - "${MINIO_API_HOST_PORT:-19100}:9000"
+      - "${MINIO_CONSOLE_HOST_PORT:-19101}:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - aiops-net
+
+  milvus:
+    image: milvusdb/milvus:v2.5.10
+    container_name: aiops-upgrade-milvus
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-./volumes}/aiops-milvus:/var/lib/milvus
+    ports:
+      - "${MILVUS_HOST_PORT:-19540}:19530"
+      - "${MILVUS_METRICS_HOST_PORT:-19091}:9091"
+    depends_on:
+      - "etcd"
+      - "minio"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 90s
+      timeout: 20s
+      retries: 5
+    networks:
+      - aiops-net
+
+networks:
+  aiops-net:
+    name: aiops-upgrade-net
+
+volumes:
+  mysql-data:
+  redis-data:

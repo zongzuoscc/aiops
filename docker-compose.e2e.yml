@@ -1,0 +1,224 @@
+name: aiops-e2e
+
+services:
+  mysql-e2e:
+    image: mysql:8.4.10
+    container_name: aiops-e2e-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${AIOPS_E2E_MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: aiops_e2e
+      MYSQL_USER: aiops
+      MYSQL_PASSWORD: ${AIOPS_E2E_MYSQL_PASSWORD}
+    ports:
+      - "127.0.0.1:33306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${AIOPS_E2E_MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - aiops-e2e-mysql-data:/var/lib/mysql
+    networks:
+      - aiops-e2e-network
+
+  rabbitmq-e2e:
+    image: rabbitmq:4.1-management-alpine
+    container_name: aiops-e2e-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: aiops
+      RABBITMQ_DEFAULT_PASS: ${AIOPS_E2E_RABBIT_PASSWORD}
+    ports:
+      - "127.0.0.1:35673:5672"
+      - "127.0.0.1:35674:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - aiops-e2e-rabbit-data:/var/lib/rabbitmq
+    networks:
+      - aiops-e2e-network
+
+  redis-e2e:
+    image: redis:8.2-alpine
+    container_name: aiops-e2e-redis
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${AIOPS_E2E_REDIS_PASSWORD}"]
+    environment:
+      AIOPS_E2E_REDIS_PASSWORD: ${AIOPS_E2E_REDIS_PASSWORD}
+    ports:
+      - "127.0.0.1:36380:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${AIOPS_E2E_REDIS_PASSWORD}\" ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - aiops-e2e-redis-data:/data
+    networks:
+      - aiops-e2e-network
+
+  etcd-e2e:
+    image: quay.io/coreos/etcd:v3.5.25
+    container_name: aiops-e2e-etcd
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: 1000
+      ETCD_QUOTA_BACKEND_BYTES: 4294967296
+      ETCD_SNAPSHOT_COUNT: 50000
+    command: etcd -advertise-client-urls=http://etcd-e2e:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - aiops-e2e-etcd-data:/etcd
+    networks:
+      - aiops-e2e-network
+
+  minio-e2e:
+    image: minio/minio:RELEASE.2024-05-28T17-19-04Z
+    container_name: aiops-e2e-minio
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    command: minio server /minio_data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - aiops-e2e-minio-data:/minio_data
+    networks:
+      - aiops-e2e-network
+
+  milvus-e2e:
+    image: milvusdb/milvus:v2.6.9
+    container_name: aiops-e2e-milvus
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      MINIO_REGION: us-east-1
+      ETCD_ENDPOINTS: etcd-e2e:2379
+      MINIO_ADDRESS: minio-e2e:9000
+    ports:
+      - "127.0.0.1:39530:19530"
+      - "127.0.0.1:39091:9091"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 10s
+      start_period: 60s
+      timeout: 5s
+      retries: 20
+    depends_on:
+      etcd-e2e:
+        condition: service_healthy
+      minio-e2e:
+        condition: service_healthy
+    volumes:
+      - aiops-e2e-milvus-data:/var/lib/milvus
+    networks:
+      - aiops-e2e-network
+
+  demo-service-e2e:
+    build:
+      context: .
+      dockerfile: demo-service/Dockerfile
+    image: aiops-e2e-demo-service:stable
+    container_name: aiops-e2e-demo-service
+    environment:
+      DEMO_TOKEN: ${AIOPS_E2E_DEMO_TOKEN}
+    ports:
+      - "127.0.0.1:38082:18080"
+    restart: unless-stopped
+    networks:
+      - aiops-e2e-network
+
+  ops-executor-e2e:
+    build:
+      context: .
+      dockerfile: ops-executor/Dockerfile
+    image: aiops-e2e-ops-executor:local
+    container_name: aiops-e2e-ops-executor
+    environment:
+      AIOPS_EXECUTOR_KEY_ID: e2e-control-plane
+      AIOPS_EXECUTOR_SHARED_SECRET: ${AIOPS_E2E_EXECUTOR_SHARED_SECRET}
+      AIOPS_EXECUTOR_DATA: /data/executor
+    ports:
+      - "127.0.0.1:38091:18091"
+    group_add:
+      - "${DOCKER_GID:-0}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./config/executor-targets.e2e.yml:/config/targets.yml:ro
+      - aiops-e2e-executor-data:/data
+    depends_on:
+      - demo-service-e2e
+    restart: unless-stopped
+    networks:
+      - aiops-e2e-network
+
+  aiops-server-e2e:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: aiops-e2e-server:local
+    container_name: aiops-e2e-server
+    environment:
+      SPRING_PROFILES_ACTIVE: autonomous
+      MYSQL_HOST: mysql-e2e
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: aiops_e2e
+      MYSQL_USER: aiops
+      MYSQL_PASSWORD: ${AIOPS_E2E_MYSQL_PASSWORD}
+      AIOPS_RABBIT_HOST: rabbitmq-e2e
+      AIOPS_RABBIT_PORT: 5672
+      AIOPS_RABBIT_USER: aiops
+      AIOPS_RABBIT_PASSWORD: ${AIOPS_E2E_RABBIT_PASSWORD}
+      AIOPS_REDIS_HOST: redis-e2e
+      AIOPS_REDIS_PORT: 6379
+      AIOPS_REDIS_PASSWORD: ${AIOPS_E2E_REDIS_PASSWORD}
+      AIOPS_EXECUTOR_URL: http://ops-executor-e2e:18091
+      AIOPS_EXECUTOR_KEY_ID: e2e-control-plane
+      AIOPS_EXECUTOR_SHARED_SECRET: ${AIOPS_E2E_EXECUTOR_SHARED_SECRET}
+      AIOPS_SECURITY_ENABLED: "true"
+      AIOPS_API_KEY: ${AIOPS_E2E_API_KEY}
+      AIOPS_ALLOWED_ORIGINS: http://127.0.0.1:5173,http://localhost:5173
+      AIOPS_MONITOR_ENABLED: "false"
+      MILVUS_HOST: milvus-e2e
+      MILVUS_PORT: 19530
+      DASHSCOPE_API_KEY: e2e-model-disabled
+      SPRING_AI_MCP_CLIENT_ENABLED: "false"
+      CLS_MOCK_ENABLED: "true"
+    ports:
+      - "127.0.0.1:39900:9900"
+    depends_on:
+      mysql-e2e:
+        condition: service_healthy
+      rabbitmq-e2e:
+        condition: service_healthy
+      redis-e2e:
+        condition: service_healthy
+      milvus-e2e:
+        condition: service_healthy
+      ops-executor-e2e:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - aiops-e2e-network
+
+volumes:
+  aiops-e2e-mysql-data:
+  aiops-e2e-rabbit-data:
+  aiops-e2e-redis-data:
+  aiops-e2e-executor-data:
+  aiops-e2e-etcd-data:
+  aiops-e2e-minio-data:
+  aiops-e2e-milvus-data:
+
+networks:
+  aiops-e2e-network:
+    name: aiops-e2e-network

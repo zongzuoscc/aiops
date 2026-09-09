@@ -1,0 +1,15 @@
+server:
+  port: 18080
+
+spring:
+  application:
+    name: aiops-demo-service
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+
+demo:
+  token: ${DEMO_TOKEN:local-demo-token}

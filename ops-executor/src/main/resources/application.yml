@@ -1,0 +1,29 @@
+server:
+  port: 18091
+  shutdown: graceful
+
+spring:
+  application:
+    name: ops-executor
+  config:
+    import: optional:file:/config/targets.yml
+  datasource:
+    url: jdbc:h2:file:${AIOPS_EXECUTOR_DATA:/data/executor}
+    username: sa
+    password:
+  sql:
+    init:
+      mode: always
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+
+aiops:
+  executor:
+    key-id: ${AIOPS_EXECUTOR_KEY_ID:local-control-plane}
+    shared-secret: ${AIOPS_EXECUTOR_SHARED_SECRET:}
+    max-clock-skew-seconds: 60
+    targets: {}

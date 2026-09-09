@@ -1,0 +1,16 @@
+aiops:
+  executor:
+    targets:
+      demo-service:
+        container-name: aiops-demo-service
+        stable-image: aiops-demo-service:stable
+        health-url: http://aiops-demo-service:18080/health
+        allowed-actions:
+          - GET_CONTAINER_STATE
+          - GET_CONTAINER_LOGS
+          - GET_CONTAINER_STATS
+          - CHECK_HTTP_HEALTH
+          - RESTART_CONTAINER
+          - RECREATE_WITH_STABLE_IMAGE
+          - RESTORE_SNAPSHOT
+          - DISCARD_SNAPSHOT

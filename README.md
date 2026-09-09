@@ -96,6 +96,14 @@ POST /api/ai_ops
 - `POST /api/chat/clear` - 清空会话历史
 - `GET /api/chat/session/{sessionId}` - 获取会话信息
 
+### 3.5 告警事件接入（新）
+
+- `POST /api/v2/incidents` - 通用告警入站，自动落库并异步触发分析
+- `POST /api/v2/integrations/alertmanager` - Alertmanager 告警入站
+- `GET /api/v2/incidents` - 查询事件列表
+- `GET /api/v2/incidents/{eventId}` - 查询事件详情，包含时间线和执行动作
+- `POST /api/v2/services` - 注册可被执行器管理的 Docker 服务
+
 ### 4. 文件管理
 
 - `POST /api/upload` - 上传文件并自动向量化
@@ -137,10 +145,65 @@ document:
 
 ```bash
 export DASHSCOPE_API_KEY=your-api-key
+export INCIDENT_AUTOMATION_ENABLED=true
+export INCIDENT_NOTIFY_WEBHOOK_URL=http://ops-callback/incident
+export AIOPS_EMAIL_ENABLED=true
+export AIOPS_EMAIL_FROM=aiops@example.com
+export AIOPS_EMAIL_TO=ops@example.com
+export SMTP_HOST=smtp.example.com
+export SMTP_PORT=465
+export SMTP_USERNAME=your-smtp-username
+export SMTP_PASSWORD=your-smtp-password
+export SMTP_AUTH=true
+export SMTP_SSL_ENABLE=true
+export SMTP_STARTTLS=false
 ```
+
+### 告警邮件配置（可选）
+
+- 启用开关：`AIOPS_EMAIL_ENABLED=true`
+- SMTP 服务：`SMTP_HOST`、`SMTP_PORT`、`SMTP_USERNAME`、`SMTP_PASSWORD`
+- 发件人与收件人：`AIOPS_EMAIL_FROM`、`AIOPS_EMAIL_TO`
+- 多个收件人使用英文逗号分隔，例如 `ops@example.com,oncall@example.com`
+- `AIOPS_EMAIL_RETRY_ATTEMPTS` 控制单次通知的发送次数，默认 3 次。
+- 当前只发送人工介入和自动修复恢复通知，不发送完整日志，避免泄露敏感信息。
+- 邮件未启用时应用仍可正常启动；邮件发送失败会记录在事件时间线，不阻塞自动修复流程。
 
 
 ## 🚀 快速开始
+
+### 一、独立 Vue 前端（新增）
+
+本次升级后，前端已从 `src/main/resources/static` 中拆出为独立目录 `frontend/`，采用 Vue 3。
+
+#### 本地开发（热更新）
+
+```bash
+cd aiops-upgrade/frontend
+npm install
+npm run dev
+```
+
+访问：`http://localhost:5173`
+
+可通过环境变量注入后端地址（默认 `/api`）：
+
+```bash
+VITE_API_BASE_URL=http://localhost:9910/api npm run dev
+```
+
+#### 生产镜像启动（推荐）
+
+前端会由 Nginx 托管，已在 `docker-compose.yml` 中新增 `aiops-web-ui` 服务。
+
+```bash
+cd aiops-upgrade
+docker compose --env-file .env.aiops up -d aiops-app aiops-web-ui
+```
+
+默认访问：`http://localhost:38080`（端口可在 `.env.aiops` 中通过 `WEB_UI_HOST_PORT` 调整）。
+
+### 二、后端 API 与容器启动
 
 ### 1. 环境准备
 
@@ -149,29 +212,67 @@ export DASHSCOPE_API_KEY=your-api-key
 export DASHSCOPE_API_KEY=your-api-key
 ```
 
-### 2. 启动应用
+### 2. 一站式 Docker 启动（推荐）
 
-方法一： 手动启动
 ```bash
-1.先启动向量数据库
-docker compose up -d -f vector-database.yml
+cd aiops-upgrade
+cp .env.aiops .env.aiops.local   # 如需本地化可复制改名后编辑
+# 编辑 .env.aiops.local 设置 DASHSCOPE_API_KEY / AI_OPS_API_KEYS
+DASHSCOPE_API_KEY=...
+APP_HOST_PORT=9910
+MYSQL_HOST_PORT=33306
+REDIS_HOST_PORT=6380
+ETCD_HOST_PORT=23379
+MINIO_API_HOST_PORT=19100
+MINIO_CONSOLE_HOST_PORT=19101
+MILVUS_HOST_PORT=19540
+MILVUS_METRICS_HOST_PORT=19091
+docker compose --env-file .env.aiops.local up -d --build
+```
 
-2.启动服务
+默认服务映射端口（已避开你当前环境现有端口）：
+- 前端 UI: `38080`
+- 应用 API: `9910`
+- MySQL: `33306`
+- Redis: `6380`
+- Milvus: `19540`
+- Etcd: `23379`
+- MinIO API: `19100`
+- MinIO Console: `19101`
+- Milvus Metrics: `19091`
+
+启动前可先检查宿主端口是否已被占用（确保和你现有两个容器不冲突）：
+```bash
+docker ps --format '{{.Names}}\\t{{.Ports}}' | rg '9910|33306|6380|23379|19100|19101|19540|19091'
+```
+也可通过如下端口占用一键自检：
+```bash
+lsof -i :38080 -i :9910 -i :33306 -i :6380 -i :23379 -i :19100 -i :19101 -i :19540 -i :19091
+```
+
+### 3. 本地直接启动（可选）
+
+```bash
+# 先启动中间件（如需）
+docker compose up -d mysql milvus etcd minio redis
+
+# 启动应用
 mvn clean install
 mvn spring-boot:run
 ```
 
-方法二：一键启动
+### 4. 兼容原启动方式
+
 ```bash
-make init  # 会自动启动向量数据库并上传运维文档到向量库
+make init  # 仍可使用现有项目脚本逻辑
 ```
 
 
-### 3. 使用示例
+### 5. 使用示例
 
 **Web 界面**
 ```
-http://localhost:9900
+http://localhost:38080
 ```
 
 **命令行**
@@ -184,6 +285,11 @@ curl -X POST http://localhost:9900/api/upload \
 curl -X POST http://localhost:9900/api/chat \
   -H "Content-Type: application/json" \
   -d '{"Id":"test","Question":"什么是向量数据库？"}'
+
+# 告警事件推送
+curl -X POST http://localhost:9900/api/incident/webhook \
+  -H "Content-Type: application/json" \
+  -d '{"alertname":"HighCPUUsage","severity":"P1","service":"payment-service","status":"firing","summary":"CPU > 90% 持续 5 分钟","description":"支付服务 CPU 异常高"}'
 
 # 健康检查
 curl http://localhost:9900/milvus/health

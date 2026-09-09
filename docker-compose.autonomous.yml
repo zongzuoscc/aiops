@@ -1,0 +1,228 @@
+name: aiops-autonomous
+
+services:
+  mysql-aiops:
+    image: mysql:8.4.10
+    container_name: aiops-mysql-autonomous
+    environment:
+      MYSQL_ROOT_PASSWORD: ${AIOPS_DB_PASSWORD:-aiops-local-password}
+      MYSQL_DATABASE: aiops
+      MYSQL_USER: aiops
+      MYSQL_PASSWORD: ${AIOPS_DB_PASSWORD:-aiops-local-password}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "127.0.0.1:23306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${AIOPS_DB_PASSWORD:-aiops-local-password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    volumes:
+      - aiops-mysql-data:/var/lib/mysql
+
+  rabbitmq-aiops:
+    image: rabbitmq:4.1-management-alpine
+    container_name: aiops-rabbitmq-autonomous
+    environment:
+      RABBITMQ_DEFAULT_USER: aiops
+      RABBITMQ_DEFAULT_PASS: ${AIOPS_RABBIT_PASSWORD:-aiops-local-password}
+    ports:
+      - "127.0.0.1:25673:5672"
+      - "127.0.0.1:25674:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - aiops-rabbit-data:/var/lib/rabbitmq
+
+  redis-aiops:
+    image: redis:8.2-alpine
+    container_name: aiops-redis-autonomous
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${AIOPS_REDIS_PASSWORD:-aiops-local-password}"]
+    ports:
+      - "127.0.0.1:16380:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${AIOPS_REDIS_PASSWORD:-aiops-local-password}\" ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    environment:
+      AIOPS_REDIS_PASSWORD: ${AIOPS_REDIS_PASSWORD:-aiops-local-password}
+    volumes:
+      - aiops-redis-data:/data
+
+  etcd-aiops:
+    image: quay.io/coreos/etcd:v3.5.25
+    container_name: aiops-etcd-autonomous
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: 1000
+      ETCD_QUOTA_BACKEND_BYTES: 4294967296
+      ETCD_SNAPSHOT_COUNT: 50000
+    command: etcd -advertise-client-urls=http://etcd-aiops:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    ports:
+      - "127.0.0.1:22379:2379"
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - aiops-etcd-data:/etcd
+
+  minio-aiops:
+    image: minio/minio:RELEASE.2024-05-28T17-19-04Z
+    container_name: aiops-minio-autonomous
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: minio server /minio_data --console-address ":9001"
+    ports:
+      - "127.0.0.1:29100:9000"
+      - "127.0.0.1:29101:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - aiops-minio-data:/minio_data
+
+  milvus-aiops:
+    image: milvusdb/milvus:v2.6.9
+    container_name: aiops-milvus-autonomous
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      MINIO_REGION: us-east-1
+      ETCD_ENDPOINTS: etcd-aiops:2379
+      MINIO_ADDRESS: minio-aiops:9000
+    ports:
+      - "127.0.0.1:29530:19530"
+      - "127.0.0.1:29091:9091"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 10s
+      start_period: 60s
+      timeout: 5s
+      retries: 20
+    depends_on:
+      etcd-aiops:
+        condition: service_healthy
+      minio-aiops:
+        condition: service_healthy
+    volumes:
+      - aiops-milvus-data:/var/lib/milvus
+
+  aiops-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: aiops-autonomous-server:local
+    container_name: aiops-server-autonomous
+    env_file:
+      - ${AIOPS_ENV_FILE:-./.env.autonomous}
+    environment:
+      SPRING_PROFILES_ACTIVE: autonomous
+      SERVER_PORT: 9900
+      MYSQL_HOST: mysql-aiops
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: aiops
+      MYSQL_USER: aiops
+      MYSQL_PASSWORD: ${AIOPS_DB_PASSWORD:-aiops-local-password}
+      AIOPS_RABBIT_HOST: rabbitmq-aiops
+      AIOPS_RABBIT_PORT: 5672
+      AIOPS_RABBIT_USER: aiops
+      AIOPS_RABBIT_PASSWORD: ${AIOPS_RABBIT_PASSWORD:-aiops-local-password}
+      AIOPS_REDIS_HOST: redis-aiops
+      AIOPS_REDIS_PORT: 6379
+      AIOPS_REDIS_PASSWORD: ${AIOPS_REDIS_PASSWORD:-aiops-local-password}
+      AIOPS_EXECUTOR_URL: http://ops-executor:18091
+      AIOPS_EXECUTOR_KEY_ID: ${AIOPS_EXECUTOR_KEY_ID:-control-plane-01}
+      AIOPS_EXECUTOR_SHARED_SECRET: ${AIOPS_EXECUTOR_SHARED_SECRET:-aiops-local-executor-secret}
+      MILVUS_HOST: milvus-aiops
+      MILVUS_PORT: 19530
+      PROMETHEUS_BASE_URL: http://prometheus-aiops:9090
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-demo-placeholder-key}
+      SPRING_AI_MCP_CLIENT_ENABLED: ${SPRING_AI_MCP_CLIENT_ENABLED:-false}
+    ports:
+      - "127.0.0.1:29900:9900"
+    depends_on:
+      mysql-aiops:
+        condition: service_healthy
+      rabbitmq-aiops:
+        condition: service_healthy
+      redis-aiops:
+        condition: service_healthy
+      milvus-aiops:
+        condition: service_healthy
+      ops-executor:
+        condition: service_started
+    restart: unless-stopped
+
+  ops-executor:
+    build:
+      context: .
+      dockerfile: ops-executor/Dockerfile
+    container_name: aiops-ops-executor
+    environment:
+      AIOPS_EXECUTOR_KEY_ID: ${AIOPS_EXECUTOR_KEY_ID:-local-control-plane}
+      AIOPS_EXECUTOR_SHARED_SECRET: ${AIOPS_EXECUTOR_SHARED_SECRET:-aiops-local-executor-secret}
+      AIOPS_EXECUTOR_DATA: /data/executor
+    ports:
+      - "127.0.0.1:18091:18091"
+    group_add:
+      - "${DOCKER_GID:-0}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./config/executor-targets.yml:/config/targets.yml:ro
+      - aiops-executor-data:/data
+    restart: unless-stopped
+
+  demo-service:
+    build:
+      context: .
+      dockerfile: demo-service/Dockerfile
+    image: aiops-demo-service:stable
+    container_name: aiops-demo-service
+    environment:
+      DEMO_TOKEN: ${DEMO_TOKEN:-local-demo-token}
+    ports:
+      - "127.0.0.1:18082:18080"
+    restart: unless-stopped
+
+  prometheus-aiops:
+    image: prom/prometheus:v3.6.0
+    container_name: aiops-prometheus-autonomous
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    ports:
+      - "127.0.0.1:19091:9090"
+    volumes:
+      - ./config/prometheus-autonomous.yml:/etc/prometheus/prometheus.yml:ro
+
+  grafana-aiops:
+    image: grafana/grafana:12.1.1
+    container_name: aiops-grafana-autonomous
+    environment:
+      GF_SECURITY_ADMIN_USER: aiops
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-aiops-local-password}
+    ports:
+      - "127.0.0.1:13001:3000"
+    volumes:
+      - aiops-grafana-data:/var/lib/grafana
+
+volumes:
+  aiops-mysql-data:
+  aiops-rabbit-data:
+  aiops-redis-data:
+  aiops-etcd-data:
+  aiops-minio-data:
+  aiops-milvus-data:
+  aiops-executor-data:
+  aiops-grafana-data:

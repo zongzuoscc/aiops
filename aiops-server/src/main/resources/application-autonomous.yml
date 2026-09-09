@@ -1,0 +1,56 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: none
+  rabbitmq:
+    host: ${AIOPS_RABBIT_HOST:localhost}
+    port: ${AIOPS_RABBIT_PORT:25673}
+    username: ${AIOPS_RABBIT_USER:aiops}
+    password: ${AIOPS_RABBIT_PASSWORD:aiops-local-password}
+    publisher-confirm-type: correlated
+    listener:
+      simple:
+        prefetch: 1
+        default-requeue-rejected: false
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 2s
+          multiplier: 2
+          max-interval: 10s
+  data:
+    redis:
+      host: ${AIOPS_REDIS_HOST:localhost}
+      port: ${AIOPS_REDIS_PORT:16380}
+      password: ${AIOPS_REDIS_PASSWORD:aiops-local-password}
+      timeout: 2s
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 199
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+
+aiops:
+  legacy-incident:
+    enabled: false
+  executor:
+    url: ${AIOPS_EXECUTOR_URL:http://localhost:18091}
+    key-id: ${AIOPS_EXECUTOR_KEY_ID:local-control-plane}
+    shared-secret: ${AIOPS_EXECUTOR_SHARED_SECRET:}
+  monitor:
+    enabled: ${AIOPS_MONITOR_ENABLED:true}
+    interval-ms: ${AIOPS_MONITOR_INTERVAL_MS:30000}
+    failure-threshold: ${AIOPS_MONITOR_FAILURE_THRESHOLD:3}
+  control-plane:
+    security:
+      enabled: ${AIOPS_SECURITY_ENABLED:false}
+      api-key: ${AIOPS_API_KEY:}
+      allowed-origins: ${AIOPS_ALLOWED_ORIGINS:http://127.0.0.1:5173,http://localhost:5173}
