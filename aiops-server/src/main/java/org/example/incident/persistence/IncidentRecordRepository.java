@@ -1,6 +1,8 @@
 package org.example.incident.persistence;
 
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
@@ -12,6 +14,10 @@ import org.example.incident.domain.IncidentStatus;
 public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, String> {
     Optional<IncidentRecord> findBySourceAndEventKey(String source, String eventKey);
     boolean existsByServiceIdAndStatusIn(String serviceId, Collection<IncidentStatus> statuses);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select incident from IncidentRecord incident where incident.id = :id")
+    Optional<IncidentRecord> findLockedById(String id);
 
     @Modifying
     @Query(value = """

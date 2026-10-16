@@ -49,6 +49,8 @@ aiops:
     enabled: ${AIOPS_MONITOR_ENABLED:true}
     interval-ms: ${AIOPS_MONITOR_INTERVAL_MS:30000}
     failure-threshold: ${AIOPS_MONITOR_FAILURE_THRESHOLD:3}
+  incident-correlation:
+    window-seconds: ${AIOPS_INCIDENT_CORRELATION_WINDOW_SECONDS:600}
   control-plane:
     security:
       enabled: ${AIOPS_SECURITY_ENABLED:false}

@@ -4,6 +4,8 @@ import jakarta.validation.Valid;
 import org.example.incident.application.IncidentIngestionService;
 import org.example.incident.persistence.ActionExecutionRecord;
 import org.example.incident.persistence.ActionExecutionRepository;
+import org.example.incident.persistence.AlertEventRecord;
+import org.example.incident.persistence.AlertEventRepository;
 import org.example.incident.persistence.IncidentRecord;
 import org.example.incident.persistence.IncidentRecordRepository;
 import org.example.incident.persistence.IncidentTimelineRecord;
@@ -29,16 +31,19 @@ public class IncidentCommandController {
 
     private final IncidentIngestionService ingestion;
     private final IncidentRecordRepository incidents;
+    private final AlertEventRepository alertEvents;
     private final IncidentTimelineRepository timeline;
     private final ActionExecutionRepository actions;
 
     public IncidentCommandController(
             IncidentIngestionService ingestion,
             IncidentRecordRepository incidents,
+            AlertEventRepository alertEvents,
             IncidentTimelineRepository timeline,
             ActionExecutionRepository actions) {
         this.ingestion = ingestion;
         this.incidents = incidents;
+        this.alertEvents = alertEvents;
         this.timeline = timeline;
         this.actions = actions;
     }
@@ -62,6 +67,7 @@ public class IncidentCommandController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         return new IncidentDetail(
                 IncidentView.from(incident),
+                alertEvents.findByIncidentIdOrderByReceivedAt(id),
                 timeline.findByIncidentIdOrderByCreatedAt(id),
                 actions.findByIncidentIdOrderByCreatedAt(id));
     }
@@ -90,6 +96,7 @@ public class IncidentCommandController {
 
     public record IncidentDetail(
             IncidentView incident,
+            List<AlertEventRecord> alerts,
             List<IncidentTimelineRecord> timeline,
             List<ActionExecutionRecord> actions) {
     }

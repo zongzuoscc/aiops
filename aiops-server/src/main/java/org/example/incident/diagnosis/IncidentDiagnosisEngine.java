@@ -3,6 +3,8 @@ package org.example.incident.diagnosis;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.example.incident.persistence.AlertEventRecord;
+import org.example.incident.persistence.AlertEventRepository;
 import org.example.incident.persistence.IncidentRecord;
 import org.example.incident.persistence.RunbookRecord;
 import org.example.incident.persistence.RunbookRepository;
@@ -26,22 +28,29 @@ public class IncidentDiagnosisEngine {
             """;
 
     private final RunbookRepository runbooks;
+    private final AlertEventRepository alertEvents;
     private final ObjectProvider<ChatModel> chatModels;
     private final ObjectMapper objectMapper;
 
     public IncidentDiagnosisEngine(
             RunbookRepository runbooks,
+            AlertEventRepository alertEvents,
             ObjectProvider<ChatModel> chatModels,
             ObjectMapper objectMapper) {
         this.runbooks = runbooks;
+        this.alertEvents = alertEvents;
         this.chatModels = chatModels;
         this.objectMapper = objectMapper;
     }
 
     public DiagnosisPlan diagnose(IncidentRecord incident, EvidenceBundle evidence) {
         String evidenceJson = json(evidence);
+        List<AlertEventRecord> relatedAlerts = alertEvents
+                .findByIncidentIdOrderByReceivedAt(incident.getId());
+        String relatedAlertsJson = json(relatedAlerts.stream().map(this::alertSummary).toList());
         RunbookRecord runbook = runbooks.findByEnabledTrue().stream()
-                .filter(item -> item.matches(incident.getTitle() + ' ' + evidenceJson))
+                .filter(item -> item.matches(
+                        incident.getTitle() + ' ' + relatedAlertsJson + ' ' + evidenceJson))
                 .findFirst()
                 .orElse(null);
         if (runbook == null) {
@@ -56,6 +65,7 @@ public class IncidentDiagnosisEngine {
         }
 
         String userPrompt = "Incident:\n" + json(incidentSummary(incident))
+                + "\nCorrelated alerts:\n" + relatedAlertsJson
                 + "\nEvidence:\n" + evidenceJson
                 + "\nMatched runbook:\n" + json(runbookSummary(runbook));
         try {
@@ -109,6 +119,16 @@ public class IncidentDiagnosisEngine {
                 "hint", runbook.getDiagnosisHint(),
                 "recommendedAction", runbook.getRecommendedAction().name(),
                 "minimumConfidence", runbook.getMinConfidence());
+    }
+
+    private Object alertSummary(AlertEventRecord alert) {
+        return java.util.Map.of(
+                "source", alert.getSource(),
+                "eventKey", alert.getEventKey(),
+                "alertType", alert.getAlertType(),
+                "severity", alert.getSeverity(),
+                "title", alert.getTitle(),
+                "receivedAt", alert.getReceivedAt());
     }
 
     private String json(Object value) {
