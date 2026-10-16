@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import OpsAssistant from './components/OpsAssistant.vue'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
 const API_KEY = import.meta.env.VITE_API_KEY || ''
@@ -132,6 +133,7 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
         <a class="nav-item active" href="#incidents"><span class="nav-index">01</span><span>事件台</span></a>
         <a class="nav-item" href="#services"><span class="nav-index">02</span><span>托管服务</span></a>
         <a class="nav-item" href="#policy"><span class="nav-index">03</span><span>策略边界</span></a>
+        <a class="nav-item" href="#assistant"><span class="nav-index">04</span><span>运维助手</span></a>
       </nav>
       <div class="rail-foot">
         <span class="pulse-dot" :class="{ offline: error }"></span>
@@ -159,6 +161,8 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
         <article class="metric-card"><p>需要人工</p><strong>{{ manualCount.toString().padStart(2, '0') }}</strong><span>HUMAN REQUIRED</span></article>
         <article class="metric-card service-card"><p>自动托管</p><strong>{{ automatedServices }}/{{ services.length }}</strong><span>MANAGED SERVICES</span></article>
       </section>
+
+      <OpsAssistant :services="services" @open-incident="openIncident" />
 
       <section id="incidents" class="incident-layout">
         <div class="queue-panel panel">
@@ -191,6 +195,9 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
               <div class="confidence-line"><span>置信度</span><b>{{ Math.round((parseDiagnosis(selectedIncident.diagnosis).plan?.confidence || 0) * 100) }}%</b></div>
             </section>
             <section v-if="selectedIncident.policyReason" class="policy-note"><span>POLICY DECISION</span><p>{{ selectedIncident.policyReason }}</p></section>
+            <section v-if="parseDiagnosis(selectedIncident.diagnosis)?.finalReport" class="diagnosis-note">
+              <h3>最终处理记录</h3><pre style="white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.8">{{ parseDiagnosis(selectedIncident.diagnosis).finalReport }}</pre>
+            </section>
             <section class="timeline-section">
               <div class="subhead"><h3>处置时间线</h3><span>{{ selectedTimeline.length }} STEPS</span></div>
               <ol class="timeline">

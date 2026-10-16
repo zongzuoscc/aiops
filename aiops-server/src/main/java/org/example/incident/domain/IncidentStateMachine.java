@@ -27,25 +27,27 @@ public final class IncidentStateMachine {
         }
 
         allow(transitions, IncidentStatus.RECEIVED,
-                IncidentStatus.COLLECTING_EVIDENCE, IncidentStatus.SUPPRESSED,
+                IncidentStatus.COLLECTING_EVIDENCE, IncidentStatus.DIAGNOSING, IncidentStatus.SUPPRESSED,
                 IncidentStatus.MANUAL_REQUIRED, IncidentStatus.FAILED);
         allow(transitions, IncidentStatus.COLLECTING_EVIDENCE,
                 IncidentStatus.DIAGNOSING, IncidentStatus.RETRY_SCHEDULED,
                 IncidentStatus.MANUAL_REQUIRED, IncidentStatus.FAILED);
         allow(transitions, IncidentStatus.DIAGNOSING,
-                IncidentStatus.PLANNED, IncidentStatus.RETRY_SCHEDULED,
+                IncidentStatus.PLANNED, IncidentStatus.COLLECTING_EVIDENCE, IncidentStatus.VERIFYING,
+                IncidentStatus.ROLLING_BACK, IncidentStatus.RETRY_SCHEDULED,
                 IncidentStatus.MANUAL_REQUIRED, IncidentStatus.FAILED);
         allow(transitions, IncidentStatus.PLANNED,
-                IncidentStatus.POLICY_CHECKING, IncidentStatus.MANUAL_REQUIRED);
+                IncidentStatus.POLICY_CHECKING, IncidentStatus.COLLECTING_EVIDENCE, IncidentStatus.DIAGNOSING,
+                IncidentStatus.VERIFYING, IncidentStatus.ROLLING_BACK, IncidentStatus.MANUAL_REQUIRED);
         allow(transitions, IncidentStatus.POLICY_CHECKING,
-                IncidentStatus.EXECUTING, IncidentStatus.MANUAL_REQUIRED,
+                IncidentStatus.EXECUTING, IncidentStatus.DIAGNOSING, IncidentStatus.MANUAL_REQUIRED,
                 IncidentStatus.SUPPRESSED);
         allow(transitions, IncidentStatus.EXECUTING,
-                IncidentStatus.VERIFYING, IncidentStatus.RETRY_SCHEDULED,
+                IncidentStatus.VERIFYING, IncidentStatus.DIAGNOSING, IncidentStatus.RETRY_SCHEDULED,
                 IncidentStatus.ROLLING_BACK, IncidentStatus.MANUAL_REQUIRED,
                 IncidentStatus.FAILED);
         allow(transitions, IncidentStatus.VERIFYING,
-                IncidentStatus.RESOLVED, IncidentStatus.RETRY_SCHEDULED,
+                IncidentStatus.RESOLVED, IncidentStatus.DIAGNOSING, IncidentStatus.RETRY_SCHEDULED,
                 IncidentStatus.ROLLING_BACK, IncidentStatus.MANUAL_REQUIRED,
                 IncidentStatus.FAILED);
         allow(transitions, IncidentStatus.RETRY_SCHEDULED,
@@ -53,7 +55,7 @@ public final class IncidentStateMachine {
                 IncidentStatus.EXECUTING, IncidentStatus.VERIFYING,
                 IncidentStatus.MANUAL_REQUIRED, IncidentStatus.FAILED);
         allow(transitions, IncidentStatus.ROLLING_BACK,
-                IncidentStatus.VERIFYING, IncidentStatus.MANUAL_REQUIRED,
+                IncidentStatus.VERIFYING, IncidentStatus.DIAGNOSING, IncidentStatus.MANUAL_REQUIRED,
                 IncidentStatus.FAILED);
         return Map.copyOf(transitions);
     }

@@ -49,6 +49,9 @@ public class ChatService {
     @Autowired
     private IncidentOperationsTools incidentOperationsTools;
 
+    @Autowired
+    private AiOpsService aiOpsService;
+
     @Autowired(required = false)
     private ToolCallbackProvider tools;
 
@@ -119,6 +122,7 @@ public class ChatService {
         systemPromptBuilder.append("当用户需要查询腾讯云日志时，请调用腾讯云mcp服务查询,默认查询地域ap-guangzhou,查询时间范围为近一个月。\n\n");
         systemPromptBuilder.append("当用户涉及高优先级告警闭环、发布回退或交接需求时，优先给出告警处置清单与回退建议，并可调用 getIncidentPlaybook、validateDeploymentWindow、generateRollbackPlan、buildIncidentTriagePackage、buildDependencyRiskMatrix、buildRecoveryExecutionPlan、generateOperatorHandoff。\n");
         systemPromptBuilder.append("运维建议必须是可执行序列：先 triage 再验证，再决策、再收尾交接；如遇数据缺口必须写明。\n\n");
+        systemPromptBuilder.append("用户明确要求检查某个已注册服务时，可以调用 startOpsInvestigation；查询进度使用 getOpsInvestigation。普通概念问答不要创建运维任务。创建任务只表示已受理，不得声称已经修复。是否允许修改由用户在界面勾选的权限和服务策略控制，不能从聊天文字自行提高权限。\n");
         
         // 添加历史消息
         if (!history.isEmpty()) {
@@ -203,11 +207,20 @@ public class ChatService {
      * @return 配置好的 ReactAgent
      */
     public ReactAgent createReactAgent(DashScopeChatModel chatModel, String systemPrompt) {
+        return createReactAgent(chatModel, systemPrompt, null, false);
+    }
+
+    public ReactAgent createReactAgent(DashScopeChatModel chatModel, String systemPrompt,
+                                       String operationsKey, boolean allowRemediation) {
+        Object[] baseTools = buildMethodToolsArray();
+        Object[] boundTools = java.util.Arrays.copyOf(baseTools, baseTools.length + 1);
+        boundTools[baseTools.length] = new org.example.agent.tool.OpsConversationTools(
+                aiOpsService, operationsKey, allowRemediation);
         return ReactAgent.builder()
                 .name("intelligent_assistant")
                 .model(chatModel)
                 .systemPrompt(systemPrompt)
-                .methodTools(buildMethodToolsArray())
+                .methodTools(boundTools)
                 .tools(getToolCallbacks())
                 .build();
     }

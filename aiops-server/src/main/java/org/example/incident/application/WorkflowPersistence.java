@@ -22,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.Optional;
 
 @Service
 public class WorkflowPersistence {
@@ -51,6 +52,20 @@ public class WorkflowPersistence {
     @Transactional(readOnly = true)
     public IncidentRecord incident(String id) {
         return incidents.findById(id).orElseThrow();
+    }
+
+    @Transactional
+    public void saveAgentCheckpoint(String id, Object checkpoint, IncidentStatus status,
+                                    String stage, String outcome, String summary) {
+        IncidentRecord incident = incidents.findById(id).orElseThrow();
+        incident.recordDiagnosis(json(checkpoint));
+        if (incident.getStatus() != status) incident.transition(stateMachine, status);
+        timeline.save(IncidentTimelineRecord.of(id, stage, outcome, summary, json(checkpoint)));
+    }
+
+    @Transactional
+    public void recordAgentReason(String id, String reason) {
+        incidents.findById(id).orElseThrow().recordPolicyReason(reason);
     }
 
     @Transactional
@@ -135,6 +150,16 @@ public class WorkflowPersistence {
     @Transactional(readOnly = true)
     public ActionExecutionRecord latestAction(String incidentId) {
         return actions.findFirstByIncidentIdOrderByCreatedAtDesc(incidentId).orElseThrow();
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<ActionExecutionRecord> findLatestAction(String incidentId) {
+        return actions.findFirstByIncidentIdOrderByCreatedAtDesc(incidentId);
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<ActionExecutionRecord> findAction(String idempotencyKey) {
+        return actions.findByIdempotencyKey(idempotencyKey);
     }
 
     @Transactional

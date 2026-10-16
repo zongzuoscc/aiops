@@ -8,6 +8,13 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class AutonomousOpsConfiguration {
 
+    @Bean(name = "opsAgentModelExecutor", destroyMethod = "shutdownNow")
+    java.util.concurrent.ExecutorService opsAgentModelExecutor() {
+        return new java.util.concurrent.ThreadPoolExecutor(2, 4, 60,
+                java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.ArrayBlockingQueue<>(16),
+                new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+    }
+
     @Bean
     IncidentStateMachine incidentStateMachine() {
         return new IncidentStateMachine();

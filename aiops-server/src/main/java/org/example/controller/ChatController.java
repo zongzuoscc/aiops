@@ -77,7 +77,8 @@ public class ChatController {
      * 普通对话接口（支持工具调用）
      */
     @PostMapping("/chat")
-    public ResponseEntity<ApiResponse<ChatResponse>> chat(@RequestBody ChatRequest request) {
+    public ResponseEntity<ApiResponse<ChatResponse>> chat(@RequestBody ChatRequest request,
+            @RequestHeader(value = "X-API-Key", required = false) String operationsKey) {
         String sessionId = request == null ? null : request.getId();
         try {
             logger.info("收到对话请求 - SessionId: {}, Question: {}", request.getId(), request.getQuestion());
@@ -99,7 +100,7 @@ public class ChatController {
 
             String fullAnswer = CHAT_MODE_RAG.equals(mode)
                     ? executeRagChat(request.getQuestion(), history, recalledMemories)
-                    : executeAgentChat(request.getQuestion(), history, recalledMemories);
+                    : executeAgentChat(request.getQuestion(), history, recalledMemories, operationsKey, request.isAllowOperations());
 
             conversationMemoryService.appendAssistantMessage(sessionId, fullAnswer, mode);
             chatService.storeMemory(sessionId, request.getQuestion(), fullAnswer, mode);
@@ -183,7 +184,8 @@ public class ChatController {
      * 流式对话接口（SSE）
      */
     @PostMapping(value = "/chat_stream", produces = "text/event-stream;charset=UTF-8")
-    public SseEmitter chatStream(@RequestBody ChatRequest request) {
+    public SseEmitter chatStream(@RequestBody ChatRequest request,
+            @RequestHeader(value = "X-API-Key", required = false) String operationsKey) {
         SseEmitter emitter = new SseEmitter(300000L);
         String ownerIdForAsync = AuthContext.getCurrentOwnerId();
 
@@ -213,7 +215,8 @@ public class ChatController {
                 if (CHAT_MODE_RAG.equals(mode)) {
                     streamRagChat(request.getQuestion(), history, recalledMemories, sessionId, mode, emitter);
                 } else {
-                    streamAgentChat(request.getQuestion(), history, recalledMemories, sessionId, mode, emitter);
+                    streamAgentChat(request.getQuestion(), history, recalledMemories, sessionId, mode, emitter,
+                            operationsKey, request.isAllowOperations());
                 }
             } catch (SessionAccessException e) {
                 logger.warn("流式对话访问被拒绝", e);
@@ -241,85 +244,13 @@ public class ChatController {
         return emitter;
     }
 
-    /**
-     * AI 智能运维接口（SSE）
-     */
-    @PostMapping(value = "/ai_ops", produces = "text/event-stream;charset=UTF-8")
-    public SseEmitter aiOps() {
-        SseEmitter emitter = new SseEmitter(600000L);
-        String ownerIdForAsync = AuthContext.getCurrentOwnerId();
-
-        executor.execute(() -> {
-            AuthContext.setCurrentOwnerId(ownerIdForAsync);
-            try {
-                logger.info("收到 AI 智能运维请求 - 启动多 Agent 协作流程");
-
-                DashScopeApi dashScopeApi = chatService.createDashScopeApi();
-                DashScopeChatModel chatModel = DashScopeChatModel.builder()
-                        .dashScopeApi(dashScopeApi)
-                        .defaultOptions(DashScopeChatOptions.builder()
-                                .withModel(DashScopeChatModel.DEFAULT_MODEL_NAME)
-                                .withTemperature(0.3)
-                                .withMaxToken(8000)
-                                .withTopP(0.9)
-                                .build())
-                        .build();
-
-                ToolCallback[] toolCallbacks = tools
-                        .map(ToolCallbackProvider::getToolCallbacks)
-                        .orElseGet(() -> new ToolCallback[0]);
-                emitter.send(SseEmitter.event().name("message").data(SseMessage.content("正在读取告警并拆解任务...\n")));
-
-                Optional<OverAllState> overAllStateOptional = aiOpsService.executeAiOpsAnalysis(chatModel, toolCallbacks);
-                if (overAllStateOptional.isEmpty()) {
-                    emitter.send(SseEmitter.event().name("message")
-                            .data(SseMessage.error("多 Agent 编排未获取到有效结果"), MediaType.APPLICATION_JSON));
-                    emitter.complete();
-                    return;
-                }
-
-                OverAllState state = overAllStateOptional.get();
-                Optional<String> finalReportOptional = aiOpsService.extractFinalReport(state);
-                if (finalReportOptional.isPresent()) {
-                    String finalReportText = finalReportOptional.get();
-                    emitter.send(SseEmitter.event().name("message")
-                            .data(SseMessage.content("\n\n" + "=".repeat(60) + "\n"), MediaType.APPLICATION_JSON));
-                    emitter.send(SseEmitter.event().name("message")
-                            .data(SseMessage.content("📋 **告警分析报告**\n\n"), MediaType.APPLICATION_JSON));
-
-                    int chunkSize = 50;
-                    for (int i = 0; i < finalReportText.length(); i += chunkSize) {
-                        int end = Math.min(i + chunkSize, finalReportText.length());
-                        String chunk = finalReportText.substring(i, end);
-                        emitter.send(SseEmitter.event().name("message")
-                                .data(SseMessage.content(chunk), MediaType.APPLICATION_JSON));
-                    }
-
-                    emitter.send(SseEmitter.event().name("message")
-                            .data(SseMessage.content("\n" + "=".repeat(60) + "\n\n"), MediaType.APPLICATION_JSON));
-                } else {
-                    emitter.send(SseEmitter.event().name("message")
-                            .data(SseMessage.content("⚠️ 多 Agent 流程已完成，但未能生成最终报告。"), MediaType.APPLICATION_JSON));
-                }
-
-                emitter.send(SseEmitter.event().name("message").data(SseMessage.done(), MediaType.APPLICATION_JSON));
-                emitter.complete();
-                logger.info("AI Ops 多 Agent 编排完成");
-            } catch (Exception e) {
-                logger.error("AI Ops 多 Agent 协作失败", e);
-                try {
-                    emitter.send(SseEmitter.event().name("message")
-                            .data(SseMessage.error("AI Ops 流程失败: " + e.getMessage()), MediaType.APPLICATION_JSON));
-                } catch (IOException ex) {
-                    logger.error("发送错误消息失败", ex);
-                }
-                emitter.completeWithError(e);
-            } finally {
-                AuthContext.clear();
-            }
-        });
-
-        return emitter;
+    /** Compatibility entry: enqueue the same incident task, never run a separate reporting graph. */
+    @PostMapping("/ai_ops")
+    public ResponseEntity<Map<String, Object>> aiOps(
+            @jakarta.validation.Valid @RequestBody org.example.incident.api.AgentRunController.StartRequest request,
+            @RequestHeader(value = "X-API-Key", required = false) String apiKey) {
+        return ResponseEntity.accepted().body(aiOpsService.start(request.serviceId(), request.task(),
+                request.requestId(), request.allowRemediation(), apiKey));
     }
 
     /**
@@ -441,12 +372,13 @@ public class ChatController {
         return CHAT_MODE_RAG.equals(normalized) ? CHAT_MODE_RAG : CHAT_MODE_AGENT;
     }
 
-    private String executeAgentChat(String question, List<Map<String, String>> history, List<String> recalledMemories) throws Exception {
+    private String executeAgentChat(String question, List<Map<String, String>> history, List<String> recalledMemories,
+                                    String operationsKey, boolean allowOperations) throws Exception {
         DashScopeApi dashScopeApi = chatService.createDashScopeApi();
         DashScopeChatModel chatModel = chatService.createStandardChatModel(dashScopeApi);
         chatService.logAvailableTools();
         String systemPrompt = chatService.buildSystemPrompt(history, recalledMemories);
-        ReactAgent agent = chatService.createReactAgent(chatModel, systemPrompt);
+        ReactAgent agent = chatService.createReactAgent(chatModel, systemPrompt, operationsKey, allowOperations);
         return chatService.executeChat(agent, question);
     }
 
@@ -487,12 +419,13 @@ public class ChatController {
 
     private void streamAgentChat(String question, List<Map<String, String>> history,
                                  List<String> recalledMemories,
-                                 String sessionId, String mode, SseEmitter emitter) {
+                                 String sessionId, String mode, SseEmitter emitter,
+                                 String operationsKey, boolean allowOperations) {
         DashScopeApi dashScopeApi = chatService.createDashScopeApi();
         DashScopeChatModel chatModel = chatService.createStandardChatModel(dashScopeApi);
         chatService.logAvailableTools();
         String systemPrompt = chatService.buildSystemPrompt(history, recalledMemories);
-        ReactAgent agent = chatService.createReactAgent(chatModel, systemPrompt);
+        ReactAgent agent = chatService.createReactAgent(chatModel, systemPrompt, operationsKey, allowOperations);
         StringBuilder fullAnswerBuilder = new StringBuilder();
         Flux<NodeOutput> stream;
         try {
@@ -648,6 +581,10 @@ public class ChatController {
         @com.fasterxml.jackson.annotation.JsonProperty(value = "Mode")
         @com.fasterxml.jackson.annotation.JsonAlias({"mode", "MODE"})
         private String Mode;
+
+        @com.fasterxml.jackson.annotation.JsonProperty("AllowOperations")
+        @com.fasterxml.jackson.annotation.JsonAlias("allowOperations")
+        private boolean allowOperations;
     }
 
     @Setter
