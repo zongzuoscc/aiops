@@ -8,6 +8,7 @@ DOCS_DIR = aiops-docs
 HEALTH_CHECK_API = $(SERVER_URL)/milvus/health
 DOCKER_COMPOSE_FILE = vector-database.yml
 MILVUS_CONTAINER = milvus-standalone
+export MILVUS_PORT ?= 29531
 MYSQL_CONTAINER = milvus-mysql
 MYSQL_ROOT_PASSWORD = yangyiming.com
 MVN_CMD = mvn -s settings-local.xml
@@ -241,6 +242,14 @@ up:
 		echo "$(RED)❌ Docker Compose 文件不存在: $(DOCKER_COMPOSE_FILE)$(NC)"; \
 		exit 1; \
 	fi
+	@if docker ps --format '{{.Names}}' | grep -q "^$(MILVUS_CONTAINER)$$"; then \
+		mapped_ports="$$(docker port "$(MILVUS_CONTAINER)" 19530/tcp 2>/dev/null)"; \
+		if ! printf '%s\n' "$$mapped_ports" | awk -F: '{print $$NF}' | grep -Fxq "$(MILVUS_PORT)"; then \
+			echo "$(RED)❌ 已运行 Milvus 的端口映射与 MILVUS_PORT=$(MILVUS_PORT) 不一致：$$mapped_ports$(NC)"; \
+			echo "请先备份数据并确认迁移/重建方案；本命令不会自动重建旧容器。"; \
+			exit 1; \
+		fi; \
+	fi
 	@if docker ps --format '{{.Names}}' | grep -q "^$(MILVUS_CONTAINER)$$" && \
 		docker ps --format '{{.Names}}' | grep -q "^$(MYSQL_CONTAINER)$$"; then \
 		echo "$(GREEN)✅ Milvus 和 MySQL 容器已经在运行中$(NC)"; \
@@ -260,7 +269,7 @@ up:
 			docker ps --filter "name=milvus" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"; \
 			echo ""; \
 			echo "$(GREEN)🌐 服务访问地址:$(NC)"; \
-			echo "   Milvus: localhost:19530"; \
+			echo "   Milvus: localhost:$(MILVUS_PORT)"; \
 			echo "   MySQL: localhost:3306"; \
 			echo "   Attu (Web UI): http://localhost:8000"; \
 			echo "   MinIO: http://localhost:9001 (admin/minioadmin)"; \

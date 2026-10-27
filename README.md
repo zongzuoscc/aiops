@@ -172,6 +172,10 @@ export SMTP_STARTTLS=false
 
 ## 🚀 快速开始
 
+日常使用自主运维栈：`bash scripts/start-autonomous.sh`，后端地址为 `http://127.0.0.1:29900`，详见 [自主运维 Docker 启动说明](docs/operations/autonomous-docker.md)。社区与 AIOps 仅复用镜像，容器、网络、库、卷和鉴权配置保持独立；AIOps 的 Milvus 宿主机端口为 `29531`，容器内部仍为 `19530`。
+
+下方普通 Compose 与 `make init` 是兼容入口，不与自主运维栈同时启动。旧数据须先确认升级与恢复方案，不能仅因镜像版本统一就删除旧卷或直接套用新版本。
+
 ### 一、独立 Vue 前端（新增）
 
 本次升级后，前端已从 `src/main/resources/static` 中拆出为独立目录 `frontend/`，采用 Vue 3。
@@ -189,10 +193,10 @@ npm run dev
 可通过环境变量注入后端地址（默认 `/api`）：
 
 ```bash
-VITE_API_BASE_URL=http://localhost:9910/api npm run dev
+VITE_API_BASE_URL=http://127.0.0.1:29900/api npm run dev
 ```
 
-#### 生产镜像启动（推荐）
+#### 旧版前端镜像启动（兼容保留）
 
 前端会由 Nginx 托管，已在 `docker-compose.yml` 中新增 `aiops-web-ui` 服务。
 
@@ -212,7 +216,7 @@ docker compose --env-file .env.aiops up -d aiops-app aiops-web-ui
 export DASHSCOPE_API_KEY=your-api-key
 ```
 
-### 2. 一站式 Docker 启动（推荐）
+### 2. 旧版 Docker 启动（兼容保留）
 
 ```bash
 cd aiops-upgrade
@@ -225,7 +229,7 @@ REDIS_HOST_PORT=6380
 ETCD_HOST_PORT=23379
 MINIO_API_HOST_PORT=19100
 MINIO_CONSOLE_HOST_PORT=19101
-MILVUS_HOST_PORT=19540
+MILVUS_HOST_PORT=29531
 MILVUS_METRICS_HOST_PORT=19091
 docker compose --env-file .env.aiops.local up -d --build
 ```
@@ -235,7 +239,7 @@ docker compose --env-file .env.aiops.local up -d --build
 - 应用 API: `9910`
 - MySQL: `33306`
 - Redis: `6380`
-- Milvus: `19540`
+- Milvus: `29531`
 - Etcd: `23379`
 - MinIO API: `19100`
 - MinIO Console: `19101`
@@ -243,11 +247,11 @@ docker compose --env-file .env.aiops.local up -d --build
 
 启动前可先检查宿主端口是否已被占用（确保和你现有两个容器不冲突）：
 ```bash
-docker ps --format '{{.Names}}\\t{{.Ports}}' | rg '9910|33306|6380|23379|19100|19101|19540|19091'
+docker ps --format '{{.Names}}\\t{{.Ports}}' | rg '9910|33306|6380|23379|19100|19101|29531|19091'
 ```
 也可通过如下端口占用一键自检：
 ```bash
-lsof -i :38080 -i :9910 -i :33306 -i :6380 -i :23379 -i :19100 -i :19101 -i :19540 -i :19091
+lsof -i :38080 -i :9910 -i :33306 -i :6380 -i :23379 -i :19100 -i :19101 -i :29531 -i :19091
 ```
 
 ### 3. 本地直接启动（可选）
@@ -257,6 +261,7 @@ lsof -i :38080 -i :9910 -i :33306 -i :6380 -i :23379 -i :19100 -i :19101 -i :195
 docker compose up -d mysql milvus etcd minio redis
 
 # 启动应用
+export MILVUS_PORT=29531
 mvn clean install
 mvn spring-boot:run
 ```

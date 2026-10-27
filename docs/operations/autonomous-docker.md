@@ -14,10 +14,12 @@
 
 前端不放进容器，继续在本地使用 Vue 开发服务器运行。
 
+社区与 AIOps 只复用相同版本的镜像；容器、网络、数据库、数据卷和鉴权配置仍各自独立。AIOps 的 Milvus 宿主机端口为 `29531`，社区使用 `29530`，容器内部端口仍为 `19530`。
+
 ## 1. 第一次启动
 
 ```bash
-cd /Users/yangyiming/Desktop/项目改进/aiops-upgrade
+cd /Users/yangyiming/Desktop/项目改进/运维项目相关/aiops-upgrade
 bash scripts/start-autonomous.sh
 ```
 
@@ -76,7 +78,7 @@ docker compose --env-file .env.autonomous -f docker-compose.autonomous.yml down 
 - MySQL：`23306`
 - etcd：`22379`
 - MinIO：`29100`、`29101`
-- Milvus：`29530`、`29091`
+- Milvus：`29531`、`29091`
 - RabbitMQ：`25673`、`25674`
 - Redis：`16380`
 - Prometheus：`19091`
